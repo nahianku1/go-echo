@@ -7,7 +7,6 @@ import (
 
 var err = godotenv.Load()
 
-
 type Config struct {
 	PORT                 string
 	HOST                 string
@@ -29,31 +28,29 @@ type Config struct {
 	FRONTEND_URL         string
 }
 
-func getEnv(key, fallback string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return fallback
+func getEnv(key string) string {
+	return os.Getenv(key)
+
 }
 
 var AppConfig Config = Config{
-	PORT:                getEnv("PORT", "4000"),
-	HOST:                getEnv("HOST", "localhost"),
-	JWT_SECRET:          getEnv("JWT_SECRET", "my-secret-key"),
-	DB_HOST:             getEnv("DB_HOST", "localhost"),
-	DB_PORT:             getEnv("DB_PORT", "5432"),
-	DB_USER:             getEnv("DB_USER", "postgres"),
-	DB_PASSWORD:         getEnv("DB_PASSWORD", "postgres"),
-	DB_NAME:             getEnv("DB_NAME", "net_http_db"),
-	DB_SSLMODE:          getEnv("DB_SSLMODE", "disable"),
-	GOOGLE_CLIENT_ID:    getEnv("GOOGLE_CLIENT_ID", "691283293069-rlp9tv47etof6ipgoge4qegsudn8nto1.apps.googleusercontent.com"),
-	GOOGLE_REDIRECT_URL: getEnv("GOOGLE_REDIRECT_URL", "http://localhost:5173/"),
+	PORT:                getEnv("PORT"),
+	HOST:                getEnv("HOST"),
+	JWT_SECRET:          getEnv("JWT_SECRET"),
+	DB_HOST:             getEnv("DB_HOST"),
+	DB_PORT:             getEnv("DB_PORT"),
+	DB_USER:             getEnv("DB_USER"),
+	DB_PASSWORD:         getEnv("DB_PASSWORD"),
+	DB_NAME:             getEnv("DB_NAME"),
+	DB_SSLMODE:          getEnv("DB_SSLMODE"),
+	GOOGLE_CLIENT_ID:    getEnv("GOOGLE_CLIENT_ID"),
+	GOOGLE_REDIRECT_URL: getEnv("GOOGLE_REDIRECT_URL"),
 
-	GOOGLE_CLIENT_SECRET: getEnv("GOOGLE_CLIENT_SECRET", "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"),
-	SMTP_HOST:            getEnv("SMTP_HOST", "live.smtp.mailtrap.io"),
-	SMTP_PORT:            getEnv("SMTP_PORT", "587"),
-	SMTP_USER:            getEnv("SMTP_USER", "api"),
-	SMTP_PASSWORD:        getEnv("SMTP_PASSWORD", ""),
-	SMTP_FROM:            getEnv("SMTP_FROM", "hello@demomailtrap.com"),
-	FRONTEND_URL:         getEnv("FRONTEND_URL", "http://localhost:5173"),
+	GOOGLE_CLIENT_SECRET: getEnv("GOOGLE_CLIENT_SECRET"),
+	SMTP_HOST:            getEnv("SMTP_HOST"),
+	SMTP_PORT:            getEnv("SMTP_PORT"),
+	SMTP_USER:            getEnv("SMTP_USER"),
+	SMTP_PASSWORD:        getEnv("SMTP_PASSWORD"),
+	SMTP_FROM:            getEnv("SMTP_FROM"),
+	FRONTEND_URL:         getEnv("FRONTEND_URL"),
 }
