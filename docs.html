@@ -134,10 +134,10 @@
         </div>
 
         <div class="nav-actions">
-            <a href="/api/openapi.yaml" target="_blank" class="action-btn">
+            <a href="/api/openapi" target="_blank" class="action-btn">
                 📄 View OpenAPI Spec
             </a>
-            <a href="/api/openapi.yaml" download="openapi.yaml" class="action-btn">
+            <a href="/api/openapi" download="openapi.yaml" class="action-btn">
                 ⬇️ Download YAML
             </a>
         </div>
@@ -153,7 +153,7 @@
     <script>
         window.onload = () => {
             window.ui = SwaggerUIBundle({
-                url: "/api/openapi.yaml",
+                url: "/api/openapi",
                 dom_id: '#swagger-ui',
                 deepLinking: true,
                 presets: [
