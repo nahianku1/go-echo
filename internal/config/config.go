@@ -8,15 +8,11 @@ import (
 var err = godotenv.Load()
 
 type Config struct {
-	PORT                 string
-	HOST                 string
-	JWT_SECRET           string
-	DB_HOST              string
-	DB_PORT              string
-	DB_USER              string
-	DB_PASSWORD          string
-	DB_NAME              string
-	DB_SSLMODE           string
+	PORT       string
+	HOST       string
+	JWT_SECRET string
+	DB_URI     string
+
 	GOOGLE_CLIENT_ID     string
 	GOOGLE_CLIENT_SECRET string
 	GOOGLE_REDIRECT_URL  string
@@ -37,12 +33,7 @@ var AppConfig Config = Config{
 	PORT:                getEnv("PORT"),
 	HOST:                getEnv("HOST"),
 	JWT_SECRET:          getEnv("JWT_SECRET"),
-	DB_HOST:             getEnv("DB_HOST"),
-	DB_PORT:             getEnv("DB_PORT"),
-	DB_USER:             getEnv("DB_USER"),
-	DB_PASSWORD:         getEnv("DB_PASSWORD"),
-	DB_NAME:             getEnv("DB_NAME"),
-	DB_SSLMODE:          getEnv("DB_SSLMODE"),
+	DB_URI:              getEnv("DB_URI"),
 	GOOGLE_CLIENT_ID:    getEnv("GOOGLE_CLIENT_ID"),
 	GOOGLE_REDIRECT_URL: getEnv("GOOGLE_REDIRECT_URL"),
 
