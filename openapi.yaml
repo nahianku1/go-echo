@@ -1,0 +1,1654 @@
+openapi: 3.1.0
+
+info:
+    version: "1.0.0"
+    title: "Net-HTTP API"
+    description: |
+        REST API for the backend (Go Echo + GORM + PostgreSQL).
+
+        Authentication is JWT-based and sent either as a `Bearer` token in the
+        `Authorization` header or as an `access_token` cookie (set by
+        `verify-otp` / Google OAuth login).
+
+        Interactive documentation: <a href="/api/docs">Swagger UI</a>
+    contact:
+        name: "View Interactive Documentation"
+        url: http://localhost:4000/api/docs
+
+servers:
+    - url: http://localhost:4010
+      description: "Mock server"
+
+tags:
+    - name: Auth
+      description: "Registration, login (email OTP + Google OAuth), profile and password operations"
+    - name: Users
+      description: "Admin-only user management"
+    - name: Logs
+      description: "Admin-only request log inspection"
+    - name: Documentation
+      description: "API specification and interactive docs"
+
+paths:
+    # ------------------------------------------------------------------
+    # Auth
+    # ------------------------------------------------------------------
+    /api/auth/register:
+        post:
+            summary: "Register a new user"
+            description: "Creates a user account and sends an email activation link. The account must be activated before logging in."
+            operationId: registerUser
+            tags:
+                - Auth
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/RegisterRequest"
+                        examples:
+                            RegisterRequestExample:
+                                $ref: "#/components/examples/RegisterRequestExample"
+            responses:
+                "201":
+                    description: "User created successfully"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              $ref: "#/components/schemas/UserResponse"
+                            examples:
+                                RegisterSuccess:
+                                    $ref: "#/components/examples/RegisterSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+
+    /api/auth/login:
+        post:
+            summary: "Login with email and password"
+            description: "Validates credentials and sends a one-time password (OTP) to the user's email. Use `/api/auth/verify-otp` to complete login."
+            operationId: login
+            tags:
+                - Auth
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/LoginRequest"
+                        examples:
+                            LoginRequestExample:
+                                $ref: "#/components/examples/LoginRequestExample"
+            responses:
+                "200":
+                    description: "Credentials valid, OTP sent to email"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              type: "null"
+                            examples:
+                                LoginSuccess:
+                                    $ref: "#/components/examples/LoginSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+
+    /api/auth/google_login:
+        get:
+            summary: "Start Google OAuth login"
+            description: "Sets PKCE/state/nonce cookies and redirects the browser to Google's authorization page."
+            operationId: googleLogin
+            tags:
+                - Auth
+            responses:
+                "307":
+                    description: "Redirect to Google OAuth consent screen (Location header)"
+
+    /api/auth/google/callback:
+        get:
+            summary: "Google OAuth callback"
+            description: "Exchanges the authorization code for a Google session, creates/finds the user, sets the `access_token` cookie and redirects to `FRONTEND_URL/complete-oauth-profile`."
+            operationId: googleCallback
+            tags:
+                - Auth
+            parameters:
+                - name: code
+                  in: query
+                  description: "Authorization code from Google"
+                  required: true
+                  schema:
+                      type: string
+                - name: state
+                  in: query
+                  description: "CSRF state echoed by Google"
+                  required: true
+                  schema:
+                      type: string
+                - name: error
+                  in: query
+                  description: "OAuth error code when the user denies consent"
+                  required: false
+                  schema:
+                      type: string
+            responses:
+                "307":
+                    description: "Redirect to FRONTEND_URL/complete-oauth-profile with access_token cookie set"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+                "500":
+                    $ref: "#/components/responses/InternalServerError"
+
+    /api/auth/logout:
+        post:
+            summary: "Log out"
+            description: "Clears the `access_token` cookie."
+            operationId: logout
+            tags:
+                - Auth
+            responses:
+                "200":
+                    description: "Logged out successfully"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              type: "null"
+                            examples:
+                                LogoutSuccess:
+                                    $ref: "#/components/examples/LogoutSuccess"
+
+    /api/auth/verify-otp:
+        post:
+            summary: "Verify OTP and log in"
+            description: "Exchanges the emailed OTP for a JWT. On success sets the `access_token` cookie (24h) and returns the user profile."
+            operationId: verifyOtp
+            tags:
+                - Auth
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/VerifyOTPRequest"
+                        examples:
+                            VerifyOTPRequestExample:
+                                $ref: "#/components/examples/VerifyOTPRequestExample"
+            responses:
+                "202":
+                    description: "OTP verified, logged in"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              $ref: "#/components/schemas/UserResponse"
+                            examples:
+                                VerifyOtpSuccess:
+                                    $ref: "#/components/examples/VerifyOtpSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+                "403":
+                    description: "OTP invalid or expired"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ErrorResponse"
+                            examples:
+                                VerifyOtpForbidden:
+                                    $ref: "#/components/examples/VerifyOtpForbidden"
+
+    /api/auth/resend-otp:
+        post:
+            summary: "Resend login OTP"
+            description: "Sends a fresh OTP to the user's email (valid for 1 minute)."
+            operationId: resendOtp
+            tags:
+                - Auth
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/ResendOTPRequest"
+                        examples:
+                            ResendOTPRequestExample:
+                                $ref: "#/components/examples/ResendOTPRequestExample"
+            responses:
+                "200":
+                    description: "OTP resent"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              type: "null"
+                            examples:
+                                ResendOtpSuccess:
+                                    $ref: "#/components/examples/ResendOtpSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+
+    /api/auth/complete-oauth-profile:
+        post:
+            summary: "Complete OAuth profile (set mobile & password)"
+            description: "Requires a valid OAuth JWT (from the Google callback cookie). Sets the missing mobile number and password for the OAuth user."
+            operationId: completeOauthProfile
+            tags:
+                - Auth
+            security:
+                - bearerAuth: []
+                - cookieAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/CompleteOauthRequest"
+                        examples:
+                            CompleteOauthRequestExample:
+                                $ref: "#/components/examples/CompleteOauthRequestExample"
+            responses:
+                "200":
+                    description: "Account setup completed"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              type: "null"
+                            examples:
+                                CompleteOauthProfileSuccess:
+                                    $ref: "#/components/examples/CompleteOauthProfileSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+
+    /api/auth/verify-email:
+        get:
+            summary: "Verify email activation token"
+            description: "Activates the account using the token from the activation email, then redirects to `FRONTEND_URL/verify?status=...&message=...`."
+            operationId: verifyEmail
+            tags:
+                - Auth
+            parameters:
+                - name: token
+                  in: query
+                  description: "Activation token from the email link"
+                  required: true
+                  schema:
+                      type: string
+            responses:
+                "303":
+                    description: "Redirect to frontend /verify route with status and message query params"
+
+    /api/auth/resend-activation:
+        post:
+            summary: "Resend account activation email"
+            description: "Sends a new activation link (valid for 5 minutes) to the user's email."
+            operationId: resendActivationEmail
+            tags:
+                - Auth
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/ResendActivationRequest"
+                        examples:
+                            ResendActivationRequestExample:
+                                $ref: "#/components/examples/ResendActivationRequestExample"
+            responses:
+                "200":
+                    description: "Activation email resent"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              type: "null"
+                            examples:
+                                ResendActivationSuccess:
+                                    $ref: "#/components/examples/ResendActivationSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+
+    /api/auth/forget-password:
+        post:
+            summary: "Send password reset email"
+            description: "Emails a password reset token (valid for 5 minutes). Use `/api/auth/set-password` with that token."
+            operationId: forgetPassword
+            tags:
+                - Auth
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/SendPasswordResetLinkRequest"
+                        examples:
+                            SendPasswordResetLinkRequestExample:
+                                $ref: "#/components/examples/SendPasswordResetLinkRequestExample"
+            responses:
+                "200":
+                    description: "Password reset email sent"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              type: "null"
+                            examples:
+                                ForgetPasswordSuccess:
+                                    $ref: "#/components/examples/ForgetPasswordSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+
+    /api/auth/resend-forget-password:
+        post:
+            summary: "Resend password reset email"
+            description: "Resends a password reset token to user email."
+            operationId: resendForgetPassword
+            tags:
+                - Auth
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/SendPasswordResetLinkRequest"
+                        examples:
+                            SendPasswordResetLinkRequestExample:
+                                $ref: "#/components/examples/SendPasswordResetLinkRequestExample"
+            responses:
+                "200":
+                    description: "Password reset email resent"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              type: "null"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+
+    /api/auth/set-password:
+        post:
+            summary: "Set a new password with reset token"
+            description: "Resets the password using the token from the password-reset email."
+            operationId: setNewPassword
+            tags:
+                - Auth
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/SetNewPasswordRequest"
+                        examples:
+                            SetNewPasswordRequestExample:
+                                $ref: "#/components/examples/SetNewPasswordRequestExample"
+            responses:
+                "200":
+                    description: "Password reset done"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              type: "null"
+                            examples:
+                                SetNewPasswordSuccess:
+                                    $ref: "#/components/examples/SetNewPasswordSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+
+    /api/auth/me:
+        get:
+            summary: "Get current user profile"
+            description: "Returns the profile of the currently authenticated user from their session token. Requires authentication (roles: user, admin, manager)."
+            operationId: getProfile
+            tags:
+                - Auth
+            security:
+                - bearerAuth: []
+                - cookieAuth: []
+            responses:
+                "200":
+                    description: "User profile retrieved"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              $ref: "#/components/schemas/UserResponse"
+                            examples:
+                                GetProfileSuccess:
+                                    $ref: "#/components/examples/GetProfileSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+                "404":
+                    $ref: "#/components/responses/NotFoundError"
+
+    /api/auth/profile:
+        put:
+            summary: "Update current user profile"
+            description: "Updates username and/or mobile of the authenticated user. Requires authentication (roles: user, admin, manager)."
+            operationId: updateProfile
+            tags:
+                - Auth
+            security:
+                - bearerAuth: []
+                - cookieAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/UpdateProfileRequest"
+                        examples:
+                            UpdateProfileRequestExample:
+                                $ref: "#/components/examples/UpdateProfileRequestExample"
+            responses:
+                "200":
+                    description: "User profile updated"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              $ref: "#/components/schemas/UserResponse"
+                            examples:
+                                UpdateProfileSuccess:
+                                    $ref: "#/components/examples/UpdateProfileSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+
+    /api/auth/change-password:
+        patch:
+            summary: "Change current user password"
+            description: "Changes the password of the authenticated user after verifying the old password. Requires authentication (roles: user, admin, manager)."
+            operationId: changePassword
+            tags:
+                - Auth
+            security:
+                - bearerAuth: []
+                - cookieAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/ChangePasswordRequest"
+                        examples:
+                            ChangePasswordRequestExample:
+                                $ref: "#/components/examples/ChangePasswordRequestExample"
+            responses:
+                "200":
+                    description: "Password changed"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              type: "null"
+                            examples:
+                                ChangePasswordSuccess:
+                                    $ref: "#/components/examples/ChangePasswordSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+
+    # ------------------------------------------------------------------
+    # Users (Admin only)
+    # ------------------------------------------------------------------
+    /api/users:
+        get:
+            summary: "List all users"
+            description: "Returns a paginated, filterable list of users. Admin role required."
+            operationId: getAllUsers
+            tags:
+                - Users
+            security:
+                - bearerAuth: []
+                - cookieAuth: []
+            parameters:
+                - $ref: "#/components/parameters/pageParam"
+                - $ref: "#/components/parameters/limitParam"
+                - $ref: "#/components/parameters/searchParam"
+                - $ref: "#/components/parameters/roleParam"
+            responses:
+                "200":
+                    description: "Users retrieved successfully"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              $ref: "#/components/schemas/PaginatedUserResponse"
+                            examples:
+                                GetUsersSuccess:
+                                    $ref: "#/components/examples/GetUsersSuccess"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+                "403":
+                    $ref: "#/components/responses/ForbiddenError"
+                "500":
+                    $ref: "#/components/responses/InternalServerError"
+
+    /api/users/{id}:
+        get:
+            summary: "Get a user by ID"
+            description: "Returns a single user. Admin role required."
+            operationId: getUserByID
+            tags:
+                - Users
+            security:
+                - bearerAuth: []
+                - cookieAuth: []
+            parameters:
+                - name: id
+                  in: path
+                  description: "User ID"
+                  required: true
+                  schema:
+                      type: integer
+                      format: int64
+                      minimum: 1
+            responses:
+                "200":
+                    description: "User retrieved successfully"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              $ref: "#/components/schemas/UserResponse"
+                            examples:
+                                GetUserSuccess:
+                                    $ref: "#/components/examples/GetUserSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+                "403":
+                    $ref: "#/components/responses/ForbiddenError"
+                "404":
+                    $ref: "#/components/responses/NotFoundError"
+
+        put:
+            summary: "Update a user"
+            description: "Updates a user's details, role, or status. Admin role required."
+            operationId: updateUser
+            tags:
+                - Users
+            security:
+                - bearerAuth: []
+                - cookieAuth: []
+            parameters:
+                - name: id
+                  in: path
+                  description: "User ID"
+                  required: true
+                  schema:
+                      type: integer
+                      format: int64
+                      minimum: 1
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/UpdateUserRequest"
+            responses:
+                "200":
+                    description: "User updated successfully"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              $ref: "#/components/schemas/UserResponse"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+                "403":
+                    $ref: "#/components/responses/ForbiddenError"
+                "404":
+                    $ref: "#/components/responses/NotFoundError"
+
+        delete:
+            summary: "Delete a user"
+            description: "Hard-deletes a user. Admin role required."
+            operationId: deleteUser
+            tags:
+                - Users
+            security:
+                - bearerAuth: []
+                - cookieAuth: []
+            parameters:
+                - name: id
+                  in: path
+                  description: "User ID"
+                  required: true
+                  schema:
+                      type: integer
+                      format: int64
+                      minimum: 1
+            responses:
+                "200":
+                    description: "User deleted successfully"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              type: "null"
+                            examples:
+                                DeleteUserSuccess:
+                                    $ref: "#/components/examples/DeleteUserSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+                "403":
+                    $ref: "#/components/responses/ForbiddenError"
+
+    /api/users/{id}/block:
+        patch:
+            summary: "Block a user"
+            description: "Disables a user's access without deleting the account. The user is rejected by every login, OTP and OAuth path while blocked. Admin role required."
+            operationId: blockUser
+            tags:
+                - Users
+            security:
+                - bearerAuth: []
+                - cookieAuth: []
+            parameters:
+                - name: id
+                  in: path
+                  description: "User ID"
+                  required: true
+                  schema:
+                      type: integer
+                      format: int64
+                      minimum: 1
+            responses:
+                "200":
+                    description: "User blocked successfully"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              $ref: "#/components/schemas/UserResponse"
+                            examples:
+                                BlockUserSuccess:
+                                    $ref: "#/components/examples/BlockUserSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+                "403":
+                    $ref: "#/components/responses/ForbiddenError"
+
+    /api/users/{id}/unblock:
+        patch:
+            summary: "Unblock a user"
+            description: "Clears a user's blocked flag, restoring the account's ability to authenticate. Admin role required."
+            operationId: unblockUser
+            tags:
+                - Users
+            security:
+                - bearerAuth: []
+                - cookieAuth: []
+            parameters:
+                - name: id
+                  in: path
+                  description: "User ID"
+                  required: true
+                  schema:
+                      type: integer
+                      format: int64
+                      minimum: 1
+            responses:
+                "200":
+                    description: "User unblocked successfully"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              $ref: "#/components/schemas/UserResponse"
+                            examples:
+                                UnblockUserSuccess:
+                                    $ref: "#/components/examples/UnblockUserSuccess"
+                "400":
+                    $ref: "#/components/responses/BadRequestError"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+                "403":
+                    $ref: "#/components/responses/ForbiddenError"
+
+    # ------------------------------------------------------------------
+    # Logs (Admin only)
+    # ------------------------------------------------------------------
+    /api/logs:
+        get:
+            summary: "List request logs"
+            description: "Returns paginated request logs with optional filters. Admin role required."
+            operationId: getAllLogs
+            tags:
+                - Logs
+            security:
+                - bearerAuth: []
+                - cookieAuth: []
+            parameters:
+                - $ref: "#/components/parameters/pageParam"
+                - $ref: "#/components/parameters/limitParam"
+                - $ref: "#/components/parameters/searchParam"
+                - name: status
+                  in: query
+                  description: "Filter by HTTP status code"
+                  required: false
+                  schema:
+                      type: integer
+                - name: method
+                  in: query
+                  description: "Filter by HTTP method (GET, POST, PUT, PATCH, DELETE)"
+                  required: false
+                  schema:
+                      type: string
+                      enum: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+                - name: user
+                  in: query
+                  description: "Filter by user email (or provider id for OAuth users)"
+                  required: false
+                  schema:
+                      type: string
+            responses:
+                "200":
+                    description: "Logs retrieved successfully"
+                    content:
+                        application/json:
+                            schema:
+                                allOf:
+                                    - $ref: "#/components/schemas/SuccessResponse"
+                                    - type: object
+                                      properties:
+                                          data:
+                                              $ref: "#/components/schemas/PaginatedLogsResponse"
+                            examples:
+                                GetLogsSuccess:
+                                    $ref: "#/components/examples/GetLogsSuccess"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
+                "403":
+                    $ref: "#/components/responses/ForbiddenError"
+                "500":
+                    $ref: "#/components/responses/InternalServerError"
+
+    # ------------------------------------------------------------------
+    # Documentation
+    # ------------------------------------------------------------------
+    /api/openapi:
+        get:
+            summary: "Get the OpenAPI specification"
+            description: "Returns the raw `openapi.yaml` served by the backend."
+            operationId: getOpenApiSpec
+            tags:
+                - Documentation
+            responses:
+                "200":
+                    description: "OpenAPI YAML document"
+                    content:
+                        application/yaml:
+                            schema:
+                                type: string
+
+    /api/docs:
+        get:
+            summary: "Interactive Swagger UI"
+            description: "Renders the API documentation in Swagger UI."
+            operationId: getDocs
+            tags:
+                - Documentation
+            responses:
+                "200":
+                    description: "Swagger UI HTML page"
+                    content:
+                        text/html:
+                            schema:
+                                type: string
+
+components:
+    securitySchemes:
+        bearerAuth:
+            type: http
+            scheme: bearer
+            bearerFormat: JWT
+            description: |
+                JWT obtained from `/api/auth/verify-otp` or the Google OAuth
+                callback. Send it as `Authorization: Bearer <token>`.
+        cookieAuth:
+            type: apiKey
+            in: cookie
+            name: access_token
+            description: |
+                JWT stored in the `access_token` cookie by `/api/auth/verify-otp`
+                and `/api/auth/google/callback`. Sent automatically by the browser.
+
+    parameters:
+        pageParam:
+            name: page
+            in: query
+            description: "Page number (1-based)"
+            required: false
+            schema:
+                type: integer
+                minimum: 1
+                default: 1
+        limitParam:
+            name: limit
+            in: query
+            description: "Results per page (1-100)"
+            required: false
+            schema:
+                type: integer
+                minimum: 1
+                maximum: 100
+                default: 10
+        searchParam:
+            name: search
+            in: query
+            description: "Search term (matches username/email; for logs, matches path/user-agent)"
+            required: false
+            schema:
+                type: string
+        roleParam:
+            name: role
+            in: query
+            description: "Filter users by role"
+            required: false
+            schema:
+                type: string
+                enum: [user, manager, admin]
+
+    examples:
+        # ------------------------------------------------------------------
+        # Request bodies
+        # ------------------------------------------------------------------
+        RegisterRequestExample:
+            summary: "Register with email and password"
+            value:
+                username: "johndoe"
+                email: "john@example.com"
+                mobile: "03001234567"
+                password: "secret123"
+                confirm_password: "secret123"
+        LoginRequestExample:
+            summary: "Login with email and password"
+            value:
+                email: "john@example.com"
+                password: "secret123"
+        VerifyOTPRequestExample:
+            summary: "OTP received by email"
+            value:
+                otp: "3f9a2c"
+        ResendOTPRequestExample:
+            summary: "Request a fresh login OTP"
+            value:
+                email: "john@example.com"
+        CompleteOauthRequestExample:
+            summary: "Finish Google signup (mobile + password)"
+            value:
+                mobile: "03001234567"
+                password: "secret123"
+        ResendActivationRequestExample:
+            summary: "Resend the activation email"
+            value:
+                email: "john@example.com"
+        SendPasswordResetLinkRequestExample:
+            summary: "Request a password reset link"
+            value:
+                email: "john@example.com"
+        SetNewPasswordRequestExample:
+            summary: "Reset the password with an email token"
+            value:
+                password: "newsecret123"
+                token: "b7f2c1a9d4e6f8..."
+        GetProfileRequestExample:
+            summary: "Fetch the current user's profile"
+            value:
+                email: "john@example.com"
+        UpdateProfileRequestExample:
+            summary: "Update username and mobile"
+            value:
+                username: "johnny"
+                mobile: "03007654321"
+        ChangePasswordRequestExample:
+            summary: "Change the current password"
+            value:
+                old_password: "secret123"
+                new_password: "newsecret123"
+
+        # ------------------------------------------------------------------
+        # Success responses
+        # ------------------------------------------------------------------
+        RegisterSuccess:
+            summary: "User registered; activation email sent"
+            value:
+                code: 201
+                status: success
+                msg: "User registered successfully! Please check your email to activate your account."
+                data:
+                    id: 1
+                    username: "johndoe"
+                    email: "john@example.com"
+                    mobile: "03001234567"
+                    role: "user"
+                    created_at: "2026-09-10T10:00:00Z"
+                    updated_at: "2026-09-10T10:00:00Z"
+        LoginSuccess:
+            summary: "Credentials accepted; OTP emailed"
+            value:
+                code: 200
+                status: success
+                msg: "OTP sent to your email"
+                data: null
+        LogoutSuccess:
+            summary: "Session cookie cleared"
+            value:
+                code: 200
+                status: success
+                msg: "Logged out successfully!"
+                data: null
+        VerifyOtpSuccess:
+            summary: "OTP verified; user logged in"
+            value:
+                code: 202
+                status: success
+                msg: "Logged In successfully!"
+                data:
+                    id: 1
+                    username: "johndoe"
+                    email: "john@example.com"
+                    mobile: "03001234567"
+                    role: "user"
+                    created_at: "2026-09-10T10:00:00Z"
+                    updated_at: "2026-09-10T10:00:00Z"
+        VerifyOtpForbidden:
+            summary: "OTP invalid or expired"
+            value:
+                code: 403
+                status: Forbidden
+                message: "OTP didn't matched!"
+        ResendOtpSuccess:
+            summary: "New login OTP emailed"
+            value:
+                code: 200
+                status: success
+                msg: "OTP resent successfully to your email"
+                data: null
+        CompleteOauthProfileSuccess:
+            summary: "OAuth account completed"
+            value:
+                code: 200
+                status: success
+                msg: "Account setup completed successfully"
+                data: null
+        ResendActivationSuccess:
+            summary: "Activation email re-sent"
+            value:
+                code: 200
+                status: success
+                msg: "Activation email resent successfully! Please check your inbox."
+                data: null
+        ForgetPasswordSuccess:
+            summary: "Password reset email sent"
+            value:
+                code: 200
+                status: success
+                msg: "Password reset email sent successfully! Please check your inbox and spam folder."
+                data: null
+        SetNewPasswordSuccess:
+            summary: "Password reset completed"
+            value:
+                code: 200
+                status: success
+                msg: "Password reset has been done successfully!"
+                data: null
+        GetProfileSuccess:
+            summary: "Current user profile"
+            value:
+                code: 200
+                status: success
+                msg: "User profile retrieved successfully!"
+                data:
+                    id: 1
+                    username: "johndoe"
+                    email: "john@example.com"
+                    mobile: "03001234567"
+                    role: "user"
+                    created_at: "2026-09-10T10:00:00Z"
+                    updated_at: "2026-09-10T10:00:00Z"
+        UpdateProfileSuccess:
+            summary: "Profile updated"
+            value:
+                code: 200
+                status: success
+                msg: "User profile updated successfully!"
+                data:
+                    id: 1
+                    username: "johndoe"
+                    email: "john@example.com"
+                    mobile: "03001234567"
+                    role: "user"
+                    created_at: "2026-09-10T10:00:00Z"
+                    updated_at: "2026-09-10T11:30:00Z"
+        ChangePasswordSuccess:
+            summary: "Password changed"
+            value:
+                code: 200
+                status: success
+                msg: "Password changed successfully!"
+                data: null
+        GetUsersSuccess:
+            summary: "Paginated user list"
+            value:
+                code: 200
+                status: success
+                msg: "Users retrieved successfully!"
+                data:
+                    users:
+                        - id: 1
+                          username: "johndoe"
+                          email: "john@example.com"
+                          mobile: "03001234567"
+                          role: "user"
+                          created_at: "2026-09-10T10:00:00Z"
+                          updated_at: "2026-09-10T10:00:00Z"
+                    total: 1
+                    page: 1
+                    limit: 10
+        GetUserSuccess:
+            summary: "Single user"
+            value:
+                code: 200
+                status: success
+                msg: "User retrieved successfully!"
+                data:
+                    id: 1
+                    username: "johndoe"
+                    email: "john@example.com"
+                    mobile: "03001234567"
+                    role: "user"
+                    created_at: "2026-09-10T10:00:00Z"
+                    updated_at: "2026-09-10T10:00:00Z"
+        DeleteUserSuccess:
+            summary: "User deleted"
+            value:
+                code: 200
+                status: success
+                msg: "User deleted successfully!"
+                data: null
+        BlockUserSuccess:
+            summary: "User blocked"
+            value:
+                code: 200
+                status: success
+                msg: "User blocked successfully!"
+                data:
+                    id: 1
+                    username: "johndoe"
+                    email: "john@example.com"
+                    mobile: "03001234567"
+                    role: "user"
+                    is_activated: true
+                    is_blocked: true
+                    created_at: "2026-09-10T10:00:00Z"
+                    updated_at: "2026-09-19T10:00:00Z"
+        UnblockUserSuccess:
+            summary: "User unblocked"
+            value:
+                code: 200
+                status: success
+                msg: "User unblocked successfully!"
+                data:
+                    id: 1
+                    username: "johndoe"
+                    email: "john@example.com"
+                    mobile: "03001234567"
+                    role: "user"
+                    is_activated: true
+                    is_blocked: false
+                    created_at: "2026-09-10T10:00:00Z"
+                    updated_at: "2026-09-19T10:00:00Z"
+        GetLogsSuccess:
+            summary: "Paginated request logs"
+            value:
+                code: 200
+                status: success
+                msg: "Logs retrieved successfully!"
+                data:
+                    logs:
+                        - id: 1
+                          created_at: "2026-09-10T10:00:00Z"
+                          method: "POST"
+                          path: "/api/auth/login"
+                          status_code: 200
+                          duration_ms: 12
+                          ip: "127.0.0.1:54321"
+                          os: "macOS 14.5"
+                          browser: "Chrome 128"
+                          user_agent: "Mozilla/5.0 ..."
+                          user: "anonymous"
+                    total: 1
+                    page: 1
+                    limit: 10
+
+        # ------------------------------------------------------------------
+        # Error responses
+        # ------------------------------------------------------------------
+        BadRequestError:
+            summary: "Validation or payload error"
+            value:
+                code: 400
+                status: "Bad Request"
+                message: "Invalid request payload"
+        UnauthorizedError:
+            summary: "Missing, invalid, or expired token"
+            value:
+                code: 401
+                status: "Unauthorized"
+                message: "Authentication token missing"
+        ForbiddenError:
+            summary: "Role check failed"
+            value:
+                code: 403
+                status: "Forbidden"
+                message: "You are not Authorized!"
+        NotFoundError:
+            summary: "Requested resource does not exist"
+            value:
+                code: 404
+                status: "Not Found"
+                message: "user not found"
+        InternalServerError:
+            summary: "Unexpected server error"
+            value:
+                code: 500
+                status: "Internal Server Error"
+                message: "Something went wrong"
+
+    schemas:
+        # ------------------------------------------------------------------
+        # Request bodies
+        # ------------------------------------------------------------------
+        RegisterRequest:
+            type: object
+            required:
+                - username
+                - email
+                - mobile
+                - password
+                - confirm_password
+            properties:
+                username:
+                    type: string
+                    minLength: 1
+                    maxLength: 20
+                    example: "johndoe"
+                email:
+                    type: string
+                    format: email
+                    example: "john@example.com"
+                mobile:
+                    type: string
+                    minLength: 11
+                    maxLength: 11
+                    example: "03001234567"
+                password:
+                    type: string
+                    minLength: 6
+                    maxLength: 200
+                    format: password
+                    example: "secret123"
+                confirm_password:
+                    type: string
+                    description: "Must equal `password`"
+                    example: "secret123"
+
+        LoginRequest:
+            type: object
+            required:
+                - email
+                - password
+            properties:
+                email:
+                    type: string
+                    format: email
+                    eexamples: ["john@example.com"]
+                password:
+                    type: string
+                    format: password
+                    eexamples: ["secret123"]
+
+        VerifyOTPRequest:
+            type: object
+            required:
+                - otp
+            properties:
+                otp:
+                    type: string
+                    description: "One-time password sent to the user's email (hex string)"
+                    eexamples: ["3f9a2c"]
+
+        ResendOTPRequest:
+            type: object
+            required:
+                - email
+            properties:
+                email:
+                    type: string
+                    format: email
+                    eexamples: ["john@example.com"]
+
+        CompleteOauthRequest:
+            type: object
+            required:
+                - mobile
+                - password
+            properties:
+                mobile:
+                    type: string
+                    minLength: 11
+                    maxLength: 11
+                    eexamples: ["03001234567"]
+                password:
+                    type: string
+                    minLength: 6
+                    maxLength: 200
+                    format: password
+                    eexamples: ["secret123"]
+
+        ResendActivationRequest:
+            type: object
+            required:
+                - email
+            properties:
+                email:
+                    type: string
+                    format: email
+                    eexamples: ["john@example.com"]
+
+        SendPasswordResetLinkRequest:
+            type: object
+            required:
+                - email
+            properties:
+                email:
+                    type: string
+                    format: email
+                    eexamples: ["john@example.com"]
+
+        SetNewPasswordRequest:
+            type: object
+            required:
+                - password
+                - token
+            properties:
+                password:
+                    type: string
+                    minLength: 6
+                    maxLength: 200
+                    format: password
+                    eexamples: ["newsecret123"]
+                token:
+                    type: string
+                    description: "Reset token from the password-reset email link"
+                    eexamples: ["a1b2c3d4e5f6..."]
+
+        GetProfileRequest:
+            type: object
+            required:
+                - email
+            properties:
+                email:
+                    type: string
+                    format: email
+                    eexamples: ["john@example.com"]
+
+        UpdateProfileRequest:
+            type: object
+            properties:
+                username:
+                    type: string
+                    minLength: 1
+                    maxLength: 20
+                    example: "johndoe"
+                email:
+                    type: string
+                    format: email
+                    example: "john@example.com"
+                mobile:
+                    type: string
+                    minLength: 11
+                    maxLength: 11
+                    example: "01712345678"
+
+        UpdateUserRequest:
+            type: object
+            properties:
+                username:
+                    type: string
+                    minLength: 1
+                    maxLength: 20
+                    example: "johndoe"
+                email:
+                    type: string
+                    format: email
+                    example: "john@example.com"
+                mobile:
+                    type: string
+                    minLength: 11
+                    maxLength: 11
+                    example: "01712345678"
+                role:
+                    type: string
+                    enum: [user, manager, admin]
+                    example: "user"
+                is_activated:
+                    type: boolean
+                    example: true
+                is_blocked:
+                    type: boolean
+                    example: false
+
+        ChangePasswordRequest:
+            type: object
+            required:
+                - old_password
+                - new_password
+            properties:
+                old_password:
+                    type: string
+                    format: password
+                    eexamples: ["secret123"]
+                new_password:
+                    type: string
+                    minLength: 6
+                    maxLength: 200
+                    format: password
+                    eexamples: ["newsecret123"]
+
+        # ------------------------------------------------------------------
+        # Response bodies
+        # ------------------------------------------------------------------
+        UserResponse:
+            type: object
+            properties:
+                id:
+                    type: integer
+                    format: int64
+                    eexamples: [1]
+                username:
+                    type: string
+                    eexamples: ["johndoe"]
+                email:
+                    type: string
+                    format: email
+                    eexamples: ["john@example.com"]
+                mobile:
+                    type: string
+                    eexamples: ["03001234567"]
+                role:
+                    type: string
+                    enum: [user, manager, admin]
+                    example: "user"
+                is_activated:
+                    type: boolean
+                    example: true
+                is_blocked:
+                    type: boolean
+                    example: false
+                created_at:
+                    type: string
+                    format: date-time
+                updated_at:
+                    type: string
+                    format: date-time
+
+        PaginatedUserResponse:
+            type: object
+            properties:
+                users:
+                    type: array
+                    items:
+                        $ref: "#/components/schemas/UserResponse"
+                total:
+                    type: integer
+                    format: int64
+                    eexamples: [25]
+                page:
+                    type: integer
+                    eexamples: [1]
+                limit:
+                    type: integer
+                    eexamples: [10]
+
+        LogResponse:
+            type: object
+            properties:
+                id:
+                    type: integer
+                    format: int64
+                    eexamples: [1]
+                created_at:
+                    type: string
+                    format: date-time
+                method:
+                    type: string
+                    eexamples: ["POST"]
+                path:
+                    type: string
+                    eexamples: ["/api/auth/login"]
+                status_code:
+                    type: integer
+                    eexamples: [200]
+                duration_ms:
+                    type: integer
+                    format: int64
+                    eexamples: [12]
+                ip:
+                    type: string
+                    eexamples: ["127.0.0.1:54321"]
+                os:
+                    type: string
+                    eexamples: ["macOS 14.5"]
+                browser:
+                    type: string
+                    eexamples: ["Chrome 128"]
+                user_agent:
+                    type: string
+                    eexamples: ["Mozilla/5.0 ..."]
+                user:
+                    type: string
+                    description: "Authenticated user email, provider id, or `anonymous`"
+                    eexamples: ["anonymous"]
+
+        PaginatedLogsResponse:
+            type: object
+            properties:
+                logs:
+                    type: array
+                    items:
+                        $ref: "#/components/schemas/LogResponse"
+                total:
+                    type: integer
+                    format: int64
+                    eexamples: [120]
+                page:
+                    type: integer
+                    eexamples: [1]
+                limit:
+                    type: integer
+                    eexamples: [10]
+
+        # ------------------------------------------------------------------
+        # Response envelope
+        # ------------------------------------------------------------------
+        SuccessResponse:
+            type: object
+            required:
+                - code
+                - status
+                - msg
+                - data
+            properties:
+                code:
+                    type: integer
+                    eexamples: [200]
+                status:
+                    type: string
+                    eexamples: ["success"]
+                msg:
+                    type: string
+                    eexamples: ["Operation performed successfully!"]
+                data:
+                    description: "Endpoint-specific payload (see per-operation responses)"
+                    nullable: true
+
+        ErrorResponse:
+            type: object
+            required:
+                - code
+                - status
+                - message
+            properties:
+                code:
+                    type: integer
+                    eexamples: [400]
+                status:
+                    type: string
+                    eexamples: ["Bad Request"]
+                message:
+                    type: string
+                    eexamples: ["Invalid request payload"]
+
+    responses:
+        BadRequestError:
+            description: "Invalid or unprocessable request"
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+                    examples:
+                        BadRequestError:
+                            $ref: "#/components/examples/BadRequestError"
+        UnauthorizedError:
+            description: "Missing, invalid, or expired authentication token"
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+                    examples:
+                        UnauthorizedError:
+                            $ref: "#/components/examples/UnauthorizedError"
+        ForbiddenError:
+            description: "Authenticated but not authorized (role check failed)"
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+                    examples:
+                        ForbiddenError:
+                            $ref: "#/components/examples/ForbiddenError"
+        NotFoundError:
+            description: "Requested resource does not exist"
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+                    examples:
+                        NotFoundError:
+                            $ref: "#/components/examples/NotFoundError"
+        InternalServerError:
+            description: "Unexpected server error"
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/ErrorResponse"
+                    examples:
+                        InternalServerError:
+                            $ref: "#/components/examples/InternalServerError"

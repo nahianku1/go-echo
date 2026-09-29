@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Net-HTTP API Documentation - Swagger UI</title>
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+    
+    <!-- Swagger UI CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
+
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --header-bg: #111827;
+            --text-color: #f3f4f6;
+            --border-color: #1f2937;
+            --accent-color: #3b82f6;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Top Navigation Bar */
+        .top-navbar {
+            background-color: var(--header-bg);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.75rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-weight: 700;
+            font-size: 1.15rem;
+            color: #ffffff;
+        }
+
+        .brand .badge {
+            background: linear-gradient(135deg, #38bdf8, #2563eb);
+            color: #ffffff;
+            font-size: 0.7rem;
+            padding: 0.2rem 0.6rem;
+            border-radius: 9999px;
+            font-weight: 600;
+            letter-spacing: 0.05em;
+        }
+
+        .nav-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .action-btn {
+            background-color: #1f2937;
+            color: #e5e7eb;
+            text-decoration: none;
+            padding: 0.45rem 0.9rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            border-radius: 6px;
+            border: 1px solid #374151;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            transition: all 0.2s ease;
+        }
+
+        .action-btn:hover {
+            background-color: #374151;
+            color: #ffffff;
+            border-color: #4b5563;
+        }
+
+        /* Main Swagger container */
+        #swagger-ui {
+            flex: 1;
+            width: 100%;
+            max-width: 1300px;
+            margin: 0 auto;
+            padding: 1.5rem 1rem 4rem;
+        }
+
+        /* Swagger UI styling enhancements for dark theme */
+        body.dark-mode {
+            background-color: #0b0f19;
+        }
+
+        .swagger-ui {
+            filter: invert(88%) hue-rotate(180deg);
+        }
+
+        .swagger-ui .microlight,
+        .swagger-ui img,
+        .swagger-ui .renderedMarkdown img,
+        .swagger-ui .model-box {
+            filter: invert(100%) hue-rotate(180deg);
+        }
+
+        .swagger-ui .topbar {
+            display: none;
+        }
+    </style>
+</head>
+<body class="dark-mode">
+
+    <!-- Top Navigation Header -->
+    <header class="top-navbar">
+        <div class="brand">
+            <span>⚡ Net-HTTP API</span>
+            <span class="badge">Swagger UI</span>
+        </div>
+
+        <div class="nav-actions">
+            <a href="/api/openapi.yaml" target="_blank" class="action-btn">
+                📄 View OpenAPI Spec
+            </a>
+            <a href="/api/openapi.yaml" download="openapi.yaml" class="action-btn">
+                ⬇️ Download YAML
+            </a>
+        </div>
+    </header>
+
+    <!-- Swagger UI Render Target -->
+    <div id="swagger-ui"></div>
+
+    <!-- Swagger UI Bundle JS -->
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+
+    <script>
+        window.onload = () => {
+            window.ui = SwaggerUIBundle({
+                url: "/api/openapi.yaml",
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "BaseLayout",
+                docExpansion: "list",
+                defaultModelsExpandDepth: 1,
+                defaultModelExpandDepth: 1,
+                displayRequestDuration: true,
+                persistAuthorization: true
+            });
+        };
+    </script>
+</body>
+</html>
