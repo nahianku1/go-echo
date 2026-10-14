@@ -35,7 +35,7 @@ func main() {
 	// Infrastructure adapters.
 	db := database.ConnectDB()
 
-	database.AutoMigrate(db, &auth.User{}, &auth.AuthAccount{}, &middlewares.RequestLog{})
+	database.AutoMigrate(db, &auth.User{}, &auth.AuthAccount{}, &auth.RefreshToken{}, &middlewares.RequestLog{})
 
 	// One token signer is built from config and shared by everything that needs
 	// to issue or verify tokens, so the secret is configured in exactly one place.
@@ -80,11 +80,15 @@ func main() {
 	// (to attribute a request to a user); both are injected here.
 	e.Use(middlewares.NewRequestLogger(db, tokens).Middleware())
 
+	// Platform is registered globally so X-Platform is normalized and available
+	// on the context for every route, including the ones added further below.
+	e.Use(middlewares.Platform())
+
 	// CORS middleware (echo built-in, same policy as the previous rs/cors setup).
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins:     []string{"http://localhost:5173"}, // Assuming default Vite port
+		AllowOrigins:     []string{"http://localhost:5173", "http://192.168.0.101:5173"}, // Assuming default Vite port
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
-		AllowHeaders:     []string{"Content-Type", "Authorization", "X-Requested-With"},
+		AllowHeaders:     []string{"Content-Type", "Authorization", "X-Requested-With", "X-Platform"},
 		AllowCredentials: true,
 	}))
 
@@ -112,7 +116,7 @@ func main() {
 	defer stop()
 
 	serverAddr := net.JoinHostPort(config.AppConfig.HOST, config.AppConfig.PORT)
-	utils.NewLogger("SERVER").Printf("Server started on http://%s:%s", config.AppConfig.HOST, config.AppConfig.PORT)
+	utils.NewLogger("SERVER").Printf("Server started on http://%s/api/docs", serverAddr)
 
 	sc := echo.StartConfig{
 		Address:         serverAddr,

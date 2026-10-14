@@ -17,13 +17,15 @@ import (
 func (c *Controller) RegisterRoutes(e *echo.Echo, auth *middlewares.Auth) {
 	// Public auth routes
 	e.POST("/api/auth/register", c.Register, middlewares.ValidateBody[dto.RegisterRequest]())
-	// Public email activation routes
 	e.GET("/api/auth/verify-email", c.VerifyEmail)
 	e.POST("/api/auth/resend-activation", c.ResendActivationEmail, middlewares.ValidateBody[dto.ResendActivationRequest]())
+
 	// Public Login routes
 	e.POST("/api/auth/login", c.Login, middlewares.ValidateBody[dto.LoginRequest]())
 	e.POST("/api/auth/verify-otp", c.VerifyOTP, middlewares.ValidateBody[dto.VerifyOTP]())
 	e.POST("/api/auth/resend-otp", c.ResendOTP, middlewares.ValidateBody[dto.ResendOTPRequest]())
+	e.POST("/api/auth/refresh", c.Refresh)
+
 	// Public Google Oauth login routes
 	e.GET("/api/auth/google_login", c.GoogleLogin)
 	e.GET("/api/auth/google/callback", c.GoogleCallback)
@@ -34,6 +36,7 @@ func (c *Controller) RegisterRoutes(e *echo.Echo, auth *middlewares.Auth) {
 
 	// Public password operation routes
 	e.POST("/api/auth/forget-password", c.SendPasswordResetEmail, middlewares.ValidateBody[dto.SendPasswordResetLinkRequest]())
+	e.GET("/api/auth/check-token", c.CheckToken)
 	e.POST("/api/auth/resend-forget-password", c.ResendPasswordResetEmail, middlewares.ValidateBody[dto.ResendForgetPasswordRequest]())
 	e.POST("/api/auth/set-password", c.SetNewPassword, middlewares.ValidateBody[dto.SetNewPassword]())
 

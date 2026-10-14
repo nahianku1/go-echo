@@ -21,8 +21,6 @@ type CompleteOauthRequest struct {
 	Password string `json:"password" validate:"required,min=6,max=200"`
 }
 
-
-
 type LoginRequest struct {
 	Email    string `json:"email" validate:"required,email_rfc5322"`
 	Password string `json:"password" validate:"required"`
@@ -58,7 +56,12 @@ type SetNewPassword struct {
 }
 
 type VerifyOTP struct {
-	OTP string
+	Email string `json:"email" validate:"required"`
+	OTP   string `json:"otp" validate:"required"`
+}
+
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token,omitempty"`
 }
 
 type ResendActivationRequest struct {
@@ -80,4 +83,3 @@ type ResendForgetPasswordRequest struct {
 type GetProfile struct {
 	Email string `json:"email" validate:"required,email_rfc5322"`
 }
-

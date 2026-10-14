@@ -169,14 +169,36 @@ paths:
                                       properties:
                                           data:
                                               type: "null"
-                            examples:
-                                LogoutSuccess:
-                                    $ref: "#/components/examples/LogoutSuccess"
+                             examples:
+                                 LogoutSuccess:
+                                     $ref: "#/components/examples/LogoutSuccess"
+
+    /api/auth/refresh:
+        post:
+            summary: "Refresh access token"
+            description: "Rotates the HttpOnly refresh_token cookie. Mobile clients may send refresh_token in the JSON body."
+            operationId: refreshToken
+            tags:
+                - Auth
+            requestBody:
+                required: false
+                content:
+                    application/json:
+                        schema:
+                            type: object
+                            properties:
+                                refresh_token:
+                                    type: string
+            responses:
+                "200":
+                    description: "Token refreshed successfully"
+                "401":
+                    $ref: "#/components/responses/UnauthorizedError"
 
     /api/auth/verify-otp:
         post:
             summary: "Verify OTP and log in"
-            description: "Exchanges the emailed OTP for a JWT. On success sets the `access_token` cookie (24h) and returns the user profile."
+            description: "Exchanges the emailed OTP for a short-lived JWT. On success sets the `access_token` cookie (15m) and issues a refresh token."
             operationId: verifyOtp
             tags:
                 - Auth

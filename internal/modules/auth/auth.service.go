@@ -2,14 +2,20 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
-	"gorm.io/gorm"
 	"log"
 	"net-http/internal/modules/auth/dto"
 	"net-http/internal/utils"
 	"time"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+const refreshTokenLifetime = 30 * 24 * time.Hour
 
 // Service holds the auth use-cases.
 //
@@ -30,7 +36,7 @@ func NewService(db *gorm.DB, mailer Mailer, tokens utils.TokenService) *Service 
 	return &Service{db: db, mailer: mailer, tokens: tokens}
 }
 
-func (s *Service) Register(ctx context.Context, payload dto.RegisterRequest) (*dto.UserResponse, error) {
+func (s *Service) Register(ctx context.Context, payload dto.RegisterRequest, platform string) (*dto.UserResponse, error) {
 	// Check if user already exists with the same email
 	var existingUser User
 	err := s.db.WithContext(ctx).Where("email = ?", payload.Email).First(&existingUser).Error
@@ -67,7 +73,7 @@ func (s *Service) Register(ctx context.Context, payload dto.RegisterRequest) (*d
 		Password:                 hashedPassword,
 		Role:                     UserRole,
 		IsActivated:              false,
-		ActivationToken:          activationToken,
+		ActivationToken:          &activationToken,
 		ActivationTokenExpiresAt: &expiresAt,
 	}
 
@@ -76,11 +82,11 @@ func (s *Service) Register(ctx context.Context, payload dto.RegisterRequest) (*d
 	}
 
 	// Send the activation email off the request path through the injected mailer.
-	go func(email, username, token string) {
-		if err := s.mailer.SendActivationEmail(context.Background(), email, username, token); err != nil {
+	go func(email, username, token string, platform string) {
+		if err := s.mailer.SendActivationEmail(context.Background(), email, username, token, platform); err != nil {
 			log.Printf("[ERROR] Failed to send activation email: %v", err)
 		}
-	}(user.Email, user.Username, activationToken)
+	}(user.Email, user.Username, activationToken, platform)
 
 	res := toUserResponse(&user)
 	return &res, nil
@@ -112,7 +118,7 @@ func (s *Service) SetOauthMobileAndPassword(ctx context.Context, provider_id str
 	if err := s.db.WithContext(ctx).Model(&account.User).Updates(User{
 		Mobile:   payload.Mobile,
 		Password: hashedPassword,
-		OauthId:  provider_id,
+		OauthId:  &provider_id,
 	}).Error; err != nil {
 		return fmt.Errorf("failed to update user: %w", err)
 	}
@@ -130,7 +136,7 @@ func (s *Service) Login(ctx context.Context, payload dto.LoginRequest) error {
 	}
 
 	if user.IsBlocked {
-		return errors.New("your account has been blocked. Please contact an administrator")
+		return errors.New("Your account has been blocked. Please contact an administrator")
 	}
 
 	if !user.IsActivated {
@@ -140,7 +146,7 @@ func (s *Service) Login(ctx context.Context, payload dto.LoginRequest) error {
 	match, err := utils.VerifyPassword(payload.Password, user.Password)
 
 	if err != nil || !match {
-		return errors.New("Invalid email or password")
+		return errors.New("Invalid password")
 	}
 
 	otp, err := utils.GenerateHexOTP()
@@ -208,7 +214,7 @@ func (s *Service) FindOrCreateUser(ctx context.Context, googleUser *GoogleUser) 
 			Email:       email,
 			Password:    "",
 			IsActivated: activated,
-			ProfilePic:  googleUser.Picture,
+			ProfilePic:  &googleUser.Picture,
 		}
 
 		if err := s.db.WithContext(ctx).Create(&user).Error; err != nil {
@@ -271,37 +277,129 @@ func (s *Service) ResendOTP(ctx context.Context, email string) error {
 	return nil
 }
 
-func (s *Service) VerifyOTP(ctx context.Context, payload dto.VerifyOTP) (string, *dto.UserResponse, error) {
+func (s *Service) VerifyOTP(ctx context.Context, payload dto.VerifyOTP) (string, string, *dto.UserResponse, error) {
 	var user User
 
 	err := s.db.WithContext(ctx).Where("otp_token = ?", payload.OTP).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", nil, errors.New("OTP didn't matched!")
+		return "", "", nil, errors.New("OTP didn't matched!")
 	} else if err != nil {
-		return "", nil, errors.New("Database query error!")
-	}
-	if user.IsBlocked {
-		return "", nil, errors.New("your account has been blocked. Please contact an administrator")
+		return "", "", nil, errors.New("Database query error!")
 	}
 
 	if user.OtpTokenExpiresAt != nil && time.Now().After(*user.OtpTokenExpiresAt) {
-		return "", nil, errors.New("OTP has expired!")
+		return "", "", nil, errors.New("OTP has expired!")
+	}
+	if user.IsBlocked || !user.IsActivated {
+		return "", "", nil, errors.New("account is not allowed to authenticate")
 	}
 
 	token, err := s.tokens.GenerateAccessToken(user.ID, user.Username, string(user.Role), user.Email)
 
 	if err != nil {
-		return "", nil, errors.New("Token generation failed!")
+		return "", "", nil, errors.New("Token generation failed!")
+	}
+	refreshToken, err := s.createRefreshToken(ctx, user.ID)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("refresh token generation failed: %w", err)
 	}
 
 	errs := s.db.WithContext(ctx).Model(&user).Updates(map[string]any{"otp_token": nil, "otp_token_expires_at": nil}).Error
 	if errs != nil {
-		return "", nil, errors.New("OTP data update failed!")
+		return "", "", nil, errors.New("OTP data update failed!")
 	}
 
 	res := toUserResponse(&user)
 
-	return token, &res, nil
+	return token, refreshToken, &res, nil
+}
+
+func hashRefreshToken(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(hash[:])
+}
+
+func (s *Service) createRefreshToken(ctx context.Context, userID uint) (string, error) {
+	rawToken, err := utils.GenerateRandomToken()
+	if err != nil {
+		return "", err
+	}
+	familyID, err := utils.GenerateRandomToken()
+	if err != nil {
+		return "", err
+	}
+	if err := s.db.WithContext(ctx).Create(&RefreshToken{
+		UserID:    userID,
+		TokenHash: hashRefreshToken(rawToken),
+		FamilyID:  familyID,
+		ExpiresAt: time.Now().Add(refreshTokenLifetime),
+	}).Error; err != nil {
+		return "", err
+	}
+	return rawToken, nil
+}
+
+// Refresh rotates a refresh token exactly once. Reuse of an old token revokes
+// its entire family, which prevents an attacker from continuing a stolen session.
+func (s *Service) Refresh(ctx context.Context, rawToken string) (string, string, *dto.UserResponse, error) {
+	if rawToken == "" {
+		return "", "", nil, errors.New("invalid refresh token")
+	}
+
+	var accessToken, nextToken string
+	var response dto.UserResponse
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current RefreshToken
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("token_hash = ?", hashRefreshToken(rawToken)).First(&current).Error; err != nil {
+			return errors.New("invalid refresh token")
+		}
+		if current.RevokedAt != nil || current.ReplacedBy != nil {
+			now := time.Now()
+			if err := tx.Model(&RefreshToken{}).Where("family_id = ? AND revoked_at IS NULL", current.FamilyID).Updates(map[string]any{"revoked_at": now}).Error; err != nil {
+				return err
+			}
+			return errors.New("invalid refresh token")
+		}
+		if time.Now().After(current.ExpiresAt) {
+			return errors.New("refresh token expired")
+		}
+
+		var user User
+		if err := tx.First(&user, current.UserID).Error; err != nil || user.IsBlocked || !user.IsActivated {
+			return errors.New("account is not allowed to authenticate")
+		}
+		var err error
+		accessToken, err = s.tokens.GenerateAccessToken(user.ID, user.Username, string(user.Role), user.Email)
+		if err != nil {
+			return err
+		}
+		nextToken, err = utils.GenerateRandomToken()
+		if err != nil {
+			return err
+		}
+		nextHash := hashRefreshToken(nextToken)
+		now := time.Now()
+		if err := tx.Model(&current).Updates(map[string]any{"revoked_at": now, "replaced_by": nextHash}).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&RefreshToken{UserID: user.ID, TokenHash: nextHash, FamilyID: current.FamilyID, ExpiresAt: now.Add(refreshTokenLifetime)}).Error; err != nil {
+			return err
+		}
+		response = toUserResponse(&user)
+		return nil
+	})
+	if err != nil {
+		return "", "", nil, err
+	}
+	return accessToken, nextToken, &response, nil
+}
+
+func (s *Service) RevokeRefreshToken(ctx context.Context, rawToken string) error {
+	if rawToken == "" {
+		return nil
+	}
+	now := time.Now()
+	return s.db.WithContext(ctx).Model(&RefreshToken{}).Where("token_hash = ? AND revoked_at IS NULL", hashRefreshToken(rawToken)).Updates(map[string]any{"revoked_at": now}).Error
 }
 
 func (s *Service) VerifyEmail(ctx context.Context, token string) error {
@@ -333,9 +431,10 @@ func (s *Service) VerifyEmail(ctx context.Context, token string) error {
 	return nil
 }
 
-func (s *Service) ResendActivationEmail(ctx context.Context, email string) error {
+func (s *Service) ResendActivationEmail(ctx context.Context, payload dto.ResendActivationRequest, platform string) error {
 	var user User
-	err := s.db.WithContext(ctx).Where("email = ?", email).First(&user).Error
+
+	err := s.db.WithContext(ctx).Where("email = ?", payload.Email).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errors.New("user with this email does not exist")
 	} else if err != nil {
@@ -362,11 +461,11 @@ func (s *Service) ResendActivationEmail(ctx context.Context, email string) error
 		return fmt.Errorf("failed to update activation token: %w", err)
 	}
 
-	go func(email, username, token string) {
-		if err := s.mailer.SendActivationEmail(context.Background(), email, username, token); err != nil {
+	go func(email, username, token string, platform string) {
+		if err := s.mailer.SendActivationEmail(context.Background(), email, username, token, platform); err != nil {
 			log.Printf("[ERROR] Failed to send activation email: %v", err)
 		}
-	}(user.Email, user.Username, newToken)
+	}(user.Email, user.Username, newToken, platform)
 
 	return nil
 }
@@ -393,9 +492,9 @@ func (s *Service) ChangePassword(ctx context.Context, email string, payload dto.
 	return nil
 }
 
-func (s *Service) ForgetPassword(ctx context.Context, email string) error {
+func (s *Service) SendForgetPasswordLink(ctx context.Context, payload dto.SendPasswordResetLinkRequest, platform string) error {
 	var user User
-	err := s.db.WithContext(ctx).Where("email = ?", email).First(&user).Error
+	err := s.db.WithContext(ctx).Where("email = ?", payload.Email).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errors.New("User with this email does not exist")
 	} else if err != nil {
@@ -408,11 +507,11 @@ func (s *Service) ForgetPassword(ctx context.Context, email string) error {
 
 	token, _ := utils.GenerateRandomToken()
 
-	go func(email string, username string) {
-		if err := s.mailer.SendPasswordResetLink(context.Background(), email, username, token); err != nil {
+	go func(email string, plat string, username string) {
+		if err := s.mailer.SendPasswordResetLink(context.Background(), email, username, token, plat); err != nil {
 			log.Printf("[ERROR] Failed to send password reset email: %v", err)
 		}
-	}(user.Email, user.Username)
+	}(user.Email, platform, user.Username)
 
 	updates := map[string]any{
 		"new_password_token":            token,
@@ -426,9 +525,9 @@ func (s *Service) ForgetPassword(ctx context.Context, email string) error {
 	return nil
 }
 
-func (s *Service) ResendForgetPassword(ctx context.Context, email string) error {
+func (s *Service) ResendForgetPassword(ctx context.Context, payload dto.ResendForgetPasswordRequest, platform string) error {
 	var user User
-	err := s.db.WithContext(ctx).Where("email = ?", email).First(&user).Error
+	err := s.db.WithContext(ctx).Where("email = ?", payload.Email).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errors.New("User with this email does not exist")
 	} else if err != nil {
@@ -457,21 +556,23 @@ func (s *Service) ResendForgetPassword(ctx context.Context, email string) error 
 		return fmt.Errorf("failed to update password reset token: %w", err)
 	}
 
-	go func(email string, username string) {
-		if err := s.mailer.SendPasswordResetLink(context.Background(), email, username, token); err != nil {
+	go func(email string, plat string, username string) {
+		if err := s.mailer.SendPasswordResetLink(context.Background(), email, username, token, plat); err != nil {
 			log.Printf("[ERROR] Failed to send password reset email: %v", err)
 		}
-	}(user.Email, user.Username)
+	}(user.Email, platform, user.Username)
 
 	return nil
 }
 
 func (s *Service) SetNewPassword(ctx context.Context, payload dto.SetNewPassword) error {
+
+	utils.DebugLogger.Printf("token:%s and pass:%s", payload.Token, payload.Password)
 	var user User
 	err := s.db.WithContext(ctx).Where("new_password_token = ?", payload.Token).First(&user).Error
 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return errors.New("User with this email does not exist")
+		return errors.New("User with this token does not exist")
 	} else if err != nil {
 		return fmt.Errorf("Database query error: %w", err)
 	}
@@ -503,6 +604,7 @@ func (s *Service) SetNewPassword(ctx context.Context, payload dto.SetNewPassword
 	}
 
 	return nil
+
 }
 
 func (s *Service) GetProfile(ctx context.Context, email string) (*dto.UserResponse, error) {
@@ -793,3 +895,18 @@ func toUserResponse(u *User) dto.UserResponse {
 		UpdatedAt:   u.UpdatedAt,
 	}
 }
+
+// func toUserResponseWithToken(u *User, token string) dto.UserResponseWithToken {
+// 	return dto.UserResponseWithToken{
+// 		ID:          u.ID,
+// 		Username:    u.Username,
+// 		Email:       u.Email,
+// 		Mobile:      u.Mobile,
+// 		Role:        string(u.Role),
+// 		Token:       token,
+// 		IsActivated: u.IsActivated,
+// 		IsBlocked:   u.IsBlocked,
+// 		CreatedAt:   u.CreatedAt,
+// 		UpdatedAt:   u.UpdatedAt,
+// 	}
+// }

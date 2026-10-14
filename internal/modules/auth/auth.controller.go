@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
+	"net-http/internal/config"
 	"net-http/internal/middlewares"
 	"net-http/internal/modules/auth/dto"
 	"net-http/internal/utils"
@@ -46,12 +48,14 @@ func NewController(service *Service, tokens utils.TokenService, oauth *oauth2.Co
 
 func (c *Controller) Register(ctx *echo.Context) error {
 	payload, err := echo.ContextGet[dto.RegisterRequest](ctx, middlewares.ValidatedBodyKey)
+	platform, _ := echo.ContextGet[string](ctx, middlewares.PlatformContextKey)
+
 	if err != nil {
 		return utils.Err(http.StatusBadRequest, "Invalid request payload")
 	}
 	_ = fmt.Sprintf("Payload: %+v\n", payload)
 
-	userResponse, err := c.service.Register(ctx.Request().Context(), payload)
+	userResponse, err := c.service.Register(ctx.Request().Context(), payload, platform)
 	if err != nil {
 		return utils.Err(http.StatusBadRequest, err.Error())
 	}
@@ -60,42 +64,63 @@ func (c *Controller) Register(ctx *echo.Context) error {
 }
 
 func (c *Controller) VerifyEmail(ctx *echo.Context) error {
-	var token string
-	if queryToken := ctx.QueryParam("token"); queryToken != "" {
-		token = queryToken
-	} else if payload, err := echo.ContextGet[dto.VerifyEmailRequest](ctx, middlewares.ValidatedBodyKey); err == nil {
-		token = payload.Token
-	}
-
-	redirectURL, _ := url.Parse(c.frontendURL + "/verify")
-	q := redirectURL.Query()
+	token := ctx.QueryParam("token")
+	platform := ctx.QueryParam("platform")
 
 	if token == "" {
-		q.Set("status", "error")
-		q.Set("message", "Activation token is required")
-		redirectURL.RawQuery = q.Encode()
-		return ctx.Redirect(http.StatusSeeOther, redirectURL.String())
+		return utils.Err(http.StatusBadRequest, "token is required")
 	}
 
-	if err := c.service.VerifyEmail(ctx.Request().Context(), token); err != nil {
+	var redirectURL *url.URL
+
+	switch platform {
+	case "web":
+		redirectURL, _ = url.Parse(c.frontendURL + "/verify")
+
+	case "mobile":
+		redirectURL, _ = url.Parse(
+			config.AppConfig.EXPO_SCHEME + "://verify",
+		)
+
+	default:
+		return utils.Err(http.StatusBadRequest, "invalid platform")
+	}
+
+	q := redirectURL.Query()
+
+	if err := c.service.VerifyEmail(
+		ctx.Request().Context(),
+		token,
+	); err != nil {
 		q.Set("status", "error")
 		q.Set("message", err.Error())
+
 		redirectURL.RawQuery = q.Encode()
-		return ctx.Redirect(http.StatusSeeOther, redirectURL.String())
+
+		return ctx.Redirect(
+			http.StatusSeeOther,
+			redirectURL.String(),
+		)
 	}
 
 	q.Set("status", "success")
 	redirectURL.RawQuery = q.Encode()
-	return ctx.Redirect(http.StatusSeeOther, redirectURL.String())
+
+	return ctx.Redirect(
+		http.StatusSeeOther,
+		redirectURL.String(),
+	)
 }
 
 func (c *Controller) ResendActivationEmail(ctx *echo.Context) error {
 	payload, err := echo.ContextGet[dto.ResendActivationRequest](ctx, middlewares.ValidatedBodyKey)
+	platform, _ := echo.ContextGet[string](ctx, middlewares.PlatformContextKey)
+
 	if err != nil {
 		return utils.Err(http.StatusBadRequest, "Invalid request payload")
 	}
 
-	if err := c.service.ResendActivationEmail(ctx.Request().Context(), payload.Email); err != nil {
+	if err := c.service.ResendActivationEmail(ctx.Request().Context(), payload, platform); err != nil {
 		return utils.Err(http.StatusBadRequest, err.Error())
 	}
 
@@ -320,20 +345,66 @@ func (c *Controller) SetOauthMobileAndPassword(ctx *echo.Context) error {
 
 func (c *Controller) VerifyOTP(ctx *echo.Context) error {
 	payload, err := echo.ContextGet[dto.VerifyOTP](ctx, middlewares.ValidatedBodyKey)
+	platform, _ := echo.ContextGet[string](ctx, middlewares.PlatformContextKey)
 	if err != nil {
 		return utils.Err(http.StatusBadRequest, "Invalid payload!")
 	}
 
-	token, user, err := c.service.VerifyOTP(ctx.Request().Context(), payload)
+	token, refreshToken, user, err := c.service.VerifyOTP(ctx.Request().Context(), payload)
 
 	if err != nil {
 		return utils.Err(http.StatusForbidden, err.Error())
 	}
 
-	utils.SetCookie(ctx, "access_token", token, 3600*24)
+	utils.DebugLogger.Printf("From verify-otp:-[platform]:%s", platform)
+
+	if platform == "mobile" {
+
+		res := dto.UserResponseWithToken{
+			User:         *user,
+			Token:        token,
+			RefreshToken: refreshToken,
+		}
+
+		return utils.SendResponse[*dto.UserResponseWithToken](ctx, http.StatusAccepted, "Logged In successfully!", &res)
+
+	}
+	utils.SetCookie(ctx, "access_token", token, int(utils.AccessTokenLifetime/time.Second))
+	utils.SetRefreshTokenCookie(ctx, refreshToken, int(refreshTokenLifetime/time.Second))
 
 	return utils.SendResponse[*dto.UserResponse](ctx, http.StatusAccepted, "Logged In successfully!", user)
 
+}
+
+func (c *Controller) Refresh(ctx *echo.Context) error {
+	utils.DebugLogger.Printf("Refresh route hit!")
+	var payload dto.RefreshRequest
+	if err := ctx.Bind(&payload); err != nil {
+		return utils.Err(http.StatusBadRequest, "invalid refresh request")
+	}
+	rawToken := payload.RefreshToken
+	utils.DebugLogger.Printf("rawToken From mobile:%s ", rawToken)
+	platform, _ := echo.ContextGet[string](ctx, middlewares.PlatformContextKey)
+	utils.DebugLogger.Printf("Platform:%s ", platform)
+	if platform != "mobile" {
+		if cookie, err := ctx.Cookie("refresh_token"); err == nil && cookie.Value != "" {
+			rawToken = cookie.Value
+		}
+	}
+
+	accessToken, nextRefreshToken, user, err := c.service.Refresh(ctx.Request().Context(), rawToken)
+	if err != nil {
+		utils.DeleteRefreshTokenCookie(ctx)
+		return utils.Err(http.StatusUnauthorized, "invalid or expired refresh token")
+	}
+
+	if platform == "mobile" {
+		return utils.SendResponse[*dto.UserResponseWithToken](ctx, http.StatusOK, "Token refreshed successfully", &dto.UserResponseWithToken{User: *user, Token: accessToken, RefreshToken: nextRefreshToken})
+	}
+
+	utils.SetCookie(ctx, "access_token", accessToken, int(utils.AccessTokenLifetime/time.Second))
+	utils.SetRefreshTokenCookie(ctx, nextRefreshToken, int(refreshTokenLifetime/time.Second))
+	return utils.SendResponse[*dto.UserResponse](ctx, http.StatusOK, "Token refreshed successfully", user)
 }
 
 func (c *Controller) ResendOTP(ctx *echo.Context) error {
@@ -353,32 +424,72 @@ func (c *Controller) ResendOTP(ctx *echo.Context) error {
 }
 
 func (c *Controller) Logout(ctx *echo.Context) error {
-
+	if cookie, err := ctx.Cookie("refresh_token"); err == nil {
+		_ = c.service.RevokeRefreshToken(ctx.Request().Context(), cookie.Value)
+	}
 	utils.DeleteCookie(ctx, "access_token")
+	utils.DeleteRefreshTokenCookie(ctx)
 
 	return utils.SendResponse[*dto.LoginResponse](ctx, http.StatusOK, "Logged out successfully!", nil)
 }
 
 func (c *Controller) SendPasswordResetEmail(ctx *echo.Context) error {
 	payload, err := echo.ContextGet[dto.SendPasswordResetLinkRequest](ctx, middlewares.ValidatedBodyKey)
+	platform, _ := echo.ContextGet[string](ctx, middlewares.PlatformContextKey)
+
 	if err != nil {
 		return utils.Err(http.StatusBadRequest, "Invalid request payload")
 	}
 
-	if err := c.service.ForgetPassword(ctx.Request().Context(), payload.Email); err != nil {
+	if err := c.service.SendForgetPasswordLink(ctx.Request().Context(), payload, platform); err != nil {
 		return utils.Err(http.StatusBadRequest, err.Error())
 	}
 
 	return utils.SendResponse[any](ctx, http.StatusOK, "Password reset email sent successfully! Please check your inbox and spam folder.", nil)
 }
 
+func (c *Controller) CheckToken(ctx *echo.Context) error {
+	token := ctx.QueryParam("token")
+	platform := ctx.QueryParam("platform")
+
+	encodedToken := url.QueryEscape(token)
+
+	switch platform {
+	case "web":
+		redirectURL := fmt.Sprintf(
+			"%s/reset-password?token=%s",
+			config.AppConfig.FRONTEND_URL,
+			encodedToken,
+		)
+
+		return ctx.Redirect(http.StatusFound, redirectURL)
+
+	case "mobile":
+		redirectURL := fmt.Sprintf(
+			"%s://reset-password?token=%s",
+			config.AppConfig.EXPO_SCHEME,
+			encodedToken,
+		)
+
+		return ctx.Redirect(http.StatusFound, redirectURL)
+
+	default:
+		return utils.Err(
+			http.StatusBadRequest,
+			"invalid platform",
+		)
+	}
+}
+
 func (c *Controller) ResendPasswordResetEmail(ctx *echo.Context) error {
 	payload, err := echo.ContextGet[dto.ResendForgetPasswordRequest](ctx, middlewares.ValidatedBodyKey)
+	platform, _ := echo.ContextGet[string](ctx, middlewares.PlatformContextKey)
+
 	if err != nil {
 		return utils.Err(http.StatusBadRequest, "Invalid request payload")
 	}
 
-	if err := c.service.ResendForgetPassword(ctx.Request().Context(), payload.Email); err != nil {
+	if err := c.service.ResendForgetPassword(ctx.Request().Context(), payload, platform); err != nil {
 		return utils.Err(http.StatusBadRequest, err.Error())
 	}
 

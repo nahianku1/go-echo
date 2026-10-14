@@ -38,9 +38,12 @@ func (a *Auth) Require(requiredRoles ...string) echo.MiddlewareFunc {
 			var token string
 
 			// 1. Extract Bearer token from Authorization header
+			// utils.DebugLogger.Printf("From Auth:-[authHeader]:%s", c.Request().Header.Get("Authorization"))
 			if authHeader := c.Request().Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
 				token = strings.TrimPrefix(authHeader, "Bearer ")
 			}
+
+			utils.DebugLogger.Printf("Token from Mobile:%s", token)
 
 			// 2. Fallback to token cookie
 			if token == "" {

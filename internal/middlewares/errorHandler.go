@@ -9,9 +9,9 @@ import (
 
 // errorEnvelope is the standard JSON error body for every failed response.
 type errorEnvelope struct {
-	Code    int    `json:"code"`
-	Status  string `json:"status"`
-	Message string `json:"message"`
+	Code      int    `json:"code"`
+	Status    string `json:"status"`
+	Message   string `json:"message"`
 }
 
 // HTTPErrorHandler is the single place error bodies are rendered. Handlers,
@@ -43,6 +43,6 @@ func HTTPErrorHandler(c *echo.Context, err error) {
 	if r, _ := echo.UnwrapResponse(c.Response()); r != nil && r.Committed {
 		return
 	}
-
-	_ = c.JSON(code, errorEnvelope{Code: code, Status: http.StatusText(code), Message: message})
+	
+	c.JSON(code, errorEnvelope{Code: code, Status: http.StatusText(code), Message: message})
 }

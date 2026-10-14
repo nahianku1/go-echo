@@ -22,6 +22,10 @@ type Config struct {
 	SMTP_PASSWORD        string
 	SMTP_FROM            string
 	FRONTEND_URL         string
+	BACKEND_URL          string
+	MAIL_BRAND           string
+	EXPO_SCHEME          string
+	NODE_ENV             string
 }
 
 func getEnv(key string) string {
@@ -43,5 +47,9 @@ var AppConfig Config = Config{
 	SMTP_USER:            getEnv("SMTP_USER"),
 	SMTP_PASSWORD:        getEnv("SMTP_PASSWORD"),
 	SMTP_FROM:            getEnv("SMTP_FROM"),
+	MAIL_BRAND:           getEnv("MAIL_BRAND"),
 	FRONTEND_URL:         getEnv("FRONTEND_URL"),
+	BACKEND_URL:          getEnv("BACKEND_URL"),
+	EXPO_SCHEME:          getEnv("EXPO_SCHEME"),
+	NODE_ENV:             getEnv("NODE_ENV"),
 }

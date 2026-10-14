@@ -23,6 +23,10 @@ type OauthClaims struct {
 	ExpiresAt   int64  `json:"exp"`
 }
 
+// AccessTokenLifetime is intentionally short. Long-lived sessions are handled
+// by the database-backed refresh token instead of the access JWT.
+const AccessTokenLifetime = 1 * time.Minute
+
 // TokenService is the narrow seam that the rest of the app depends on instead of
 // the concrete JWT implementation.
 //
@@ -62,7 +66,7 @@ func (s *JWTSigner) GenerateAccessToken(userID uint, username string, userRole s
 		"user_role":  userRole,
 		"user_email": userEmail,
 		"iat":        now.Unix(),
-		"exp":        now.Add(24 * time.Hour).Unix(),
+		"exp":        now.Add(AccessTokenLifetime).Unix(),
 	})
 }
 
@@ -72,7 +76,7 @@ func (s *JWTSigner) GenerateOAuthToken(providerID string, provider string) (stri
 		"provider_id": providerID,
 		"provider":    provider,
 		"iat":         now.Unix(),
-		"exp":         now.Add(24 * time.Hour).Unix(),
+		"exp":         now.Add(AccessTokenLifetime).Unix(),
 	})
 }
 

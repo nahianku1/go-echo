@@ -8,11 +8,11 @@ import (
 
 // ErrorResponse is retained for reference/documentation of the wire format; the
 // actual rendering lives in middlewares.HTTPErrorHandler.
-type ErrorResponse struct {
-	Code    int    `json:"code"`
-	Status  string `json:"status"`
-	Message string `json:"message"`
-}
+// type ErrorResponse struct {
+// 	Code    int    `json:"code"`
+// 	Status  string `json:"status"`
+// 	Message string `json:"message"`
+// }
 
 // Err is the single helper for returning HTTP errors from handlers. It wraps
 // echo.NewHTTPError so every error response keeps the standard shape:

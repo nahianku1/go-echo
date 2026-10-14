@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"net"
 	"strconv"
 	"time"
 
@@ -63,11 +62,12 @@ func (m *SMTPMailer) SendActivationEmail(
 	to string,
 	name string,
 	token string,
+	platform string,
 ) error {
 	verifyURL := fmt.Sprintf(
-		"http://%s/api/auth/verify-email?token=%s",
-		net.JoinHostPort(m.config.HOST, m.config.PORT),
-		token,
+		"%s/api/auth/verify-email?token=%s&platform=%s",
+		m.config.BACKEND_URL,
+		token, platform,
 	)
 
 	fmt.Println("URL:", verifyURL)
@@ -75,7 +75,7 @@ func (m *SMTPMailer) SendActivationEmail(
 	body, err := RenderTemplate(
 		"./internal/templates/verify-email.html",
 		verificationEmailData{
-			AppName:         "Mailtrap.io",
+			AppName:         m.config.MAIL_BRAND,
 			Name:            name,
 			VerificationURL: verifyURL,
 			ExpiresIn:       "5 minutes",
@@ -88,7 +88,7 @@ func (m *SMTPMailer) SendActivationEmail(
 	}
 
 	msg := mail.NewMessage()
-	msg.SetHeader("From", fmt.Sprintf("Mailtrap <%s>", m.config.SMTP_FROM))
+	msg.SetHeader("From", fmt.Sprintf("%s <%s>", m.config.MAIL_BRAND, m.config.SMTP_FROM))
 	msg.SetHeader("To", to)
 	msg.SetHeader("Subject", "Verify your email")
 	msg.SetBody("text/html", body)
@@ -111,19 +111,22 @@ func (m *SMTPMailer) SendPasswordResetLink(
 	email string,
 	name string,
 	token string,
+	platform string,
 ) error {
+	var resetURL string
 
-	ResetURL := fmt.Sprintf(
-		"http://localhost:5173/reset-password?token=%s",
-		token,
+	resetURL = fmt.Sprintf(
+		"%s/api/auth/check-token?token=%s&platform=%s",
+		m.config.BACKEND_URL,
+		token, platform,
 	)
 
 	body, err := RenderTemplate(
 		"./internal/templates/forget-password.html",
 		passwordResetEmailData{
-			AppName:   "Mailtrap.io",
+			AppName:   m.config.MAIL_BRAND,
 			Name:      name,
-			ResetURL:  ResetURL,
+			ResetURL:  resetURL,
 			ExpiresIn: "5 minutes",
 			Year:      time.Now().Year(),
 		},
@@ -136,7 +139,7 @@ func (m *SMTPMailer) SendPasswordResetLink(
 	fromAddr := m.config.SMTP_FROM
 
 	msg := mail.NewMessage()
-	msg.SetHeader("From", fmt.Sprintf("Mailtrap <%s>", fromAddr))
+	msg.SetHeader("From", fmt.Sprintf("%s <%s>", m.config.MAIL_BRAND, fromAddr))
 	msg.SetHeader("To", email)
 	msg.SetHeader("Subject", "Verify your email")
 	msg.SetBody("text/html", body)
@@ -164,9 +167,9 @@ func (m *SMTPMailer) SendOTP(
 	body, err := RenderTemplate(
 		"./internal/templates/send-otp.html",
 		OTPEmailData{
-			AppName: "Mailtrap.io",
+			AppName: m.config.MAIL_BRAND,
 			Name:    name,
-			OtpUrl:  "http://localhost:5173/otp-verify",
+			OtpUrl:  fmt.Sprintf("%s/otp-verify", m.config.FRONTEND_URL),
 			OTP:     otp,
 			Year:    time.Now().Year(),
 		},
@@ -176,10 +179,8 @@ func (m *SMTPMailer) SendOTP(
 		return err
 	}
 
-	fromAddr := m.config.SMTP_FROM
-
 	msg := mail.NewMessage()
-	msg.SetHeader("From", fmt.Sprintf("Mailtrap <%s>", fromAddr))
+	msg.SetHeader("From", fmt.Sprintf("%s <%s>", m.config.MAIL_BRAND, m.config.SMTP_FROM))
 	msg.SetHeader("To", email)
 	msg.SetHeader("Subject", "OTP Verification")
 	msg.SetBody("text/html", body)
